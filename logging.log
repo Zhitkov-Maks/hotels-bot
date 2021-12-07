@@ -1,0 +1,19 @@
+KeyError <class 'datetime.datetime'>
+IndexError 2021-12-03 23:14:28.493963
+IndexError 2021-12-03 23:19:57.079966
+IndexError 2021-12-03 23:20:08.646622
+IndexError 2021-12-03 23:32:16.170140 my_requests
+KeyError 2021-12-04 12:20:59.788447 check_hotels
+KeyError 2021-12-04 12:30:44.921503 check_hotels
+KeyError 2021-12-04 12:33:03.266708 check_hotels
+KeyError 2021-12-04 12:36:44.637291 check_city
+KeyError 2021-12-04 12:36:58.678729 check_city
+KeyError 2021-12-04 12:42:33.833675 check_city
+KeyError 2021-12-04 12:45:21.838923 check_city
+KeyError 2021-12-04 12:47:59.040690 check_hotels
+KeyError 2021-12-04 12:49:03.441024 check_hotels
+IndexError 2021-12-04 14:12:16.562619 my_requests
+IndexError 2021-12-04 14:12:59.457967 my_requests
+IndexError 2021-12-04 14:25:32.647510 my_requests
+KeyError 2021-12-05 23:12:44.462223 check_hotels
+2021-12-07 11:13:26.425378, TypeError
