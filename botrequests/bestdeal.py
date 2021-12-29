@@ -2,8 +2,6 @@ import requests
 import json
 from typing import List, Iterator
 from datetime import datetime
-import functools
-from typing import Callable
 from decouple import config
 
 api_host = config("API_HOST")
@@ -17,121 +15,93 @@ headers = {
 }
 
 
-def logger(func: Callable) -> Callable:
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        result = None
-        try:
-            result = func(*args, **kwargs)
-        except (TypeError, ValueError, AttributeError, IndexError):
-            with open('logging.log', 'a') as file:
-                file.write(f'\n{datetime.now()}, {func.__name__}')
-        return result
-    return wrapper
-
-
-@logger
-def search_city(city: str) -> List[list]:
-    """
-    Функция находит ID Запрашиваемого Города.
-    :param city:
-    :return: id_lst
-    """
-
-    querystring = {"query": city, "locale": "ru_RU", "currency": "RUB"}
-    response = requests.request("GET", url, headers=headers, params=querystring, timeout=15)
-    data = json.loads(response.text)
-    id_city = data.get('suggestions')[0].get('entities')
-    total_list = []
-    for dct in id_city:
-        list_city = []
-        for name in dct:
-            if name == 'destinationId':
-                list_city.append(dct[name])
-            elif name == 'name':
-                list_city.append(dct[name])
-        total_list.append(list_city)
-    if len(total_list) < 1:
-        total_list.append('Извините, но мне не удалось найти такого города((')
-    return total_list
-
-
-@logger
-def search_hotels(id_city: int, data_lst: list, num_stop: int, price: list, distance: float,
-                  count_photo=0) -> Iterator:
+def search_hotels(id_city: int, data_lst: list, num_stop: int, price: list, distance: int, money,
+                  count_photo=0) -> GeneratorExit:
     """
     Функция для поиска отелей.
-    id_list: id города.
-    data_lst: дата приезда и отбытия.
-    num_stop: Количество отелей которое нужно вывести.
-    command: '/lowprice' или '/highprice', выбираем сортировку.
-    count_photo: Количество фотографий которые необходимо вывести.
+    Ищет отели в заданном ценовом диапазоне, а затем сортируется по удалению от центра.
+    param id_list: id города который выбрал пользователь.
+    param data_lst: дата приезда и отбытия.
+    param price: Ценовой диапазон.
+    param distance: Расстояние от центра города.
+    param num_stop: Количество отелей которое нужно вывести.
+    param count_photo: Количество фотографий которые необходимо вывести, если пользователь выбрал поиск с фото.
     """
-    hotels_info = {}
-    total_list = []
-    querystring = {"destinationId": id_city,
-                   "pageNumber": "1",
-                   "pageSize": "25",
-                   "checkIn": data_lst[0],
-                   "checkOut": data_lst[1],
-                   "adults1": "1",
-                   "priceMin": price[0],
-                   "priceMax": price[1],
-                   "sortOrder": "PRICE",
-                   "locale": "ru_RU",
-                   "currency": "RUB"}
+    count = 0
+    for page in range(1, 10):
+        querystring: dict = {"destinationId": id_city,
+                             "pageNumber": page,
+                             "pageSize": "25",
+                             "checkIn": data_lst[0],
+                             "checkOut": data_lst[1],
+                             "adults1": "1",
+                             "priceMin": price[0],
+                             "priceMax": price[1],
+                             "sortOrder": "PRICE",
+                             "locale": "ru_RU",
+                             "currency": money}
 
-    response = requests.request("GET", url_hotels, headers=headers, params=querystring, timeout=25)
-    if response.status_code == 200:
-        hotels = response.json().get('data').get('body').get('searchResults').get('results')
-        for index in range(len(hotels)):
-            hotels_info = {}
-            dist = hotels[index]['landmarks'][0]['distance'].split()
-            dist_float = ''.join([i if i.isdigit() else i.replace(',', '.') for i in dist[0]])
-            if float(dist_float) <= float(distance):
-                for elem in hotels[index]:
-                    if elem == 'starRating':
-                        hotels_info.update({'Star': int(hotels[index]['starRating']) * '*'})
-                    elif elem == 'address':
-                        hotels_info.update({'City': hotels[index]['address']['locality']})
-                        if 'streetAddress' in hotels[index]['address']:
-                            hotels_info.update({'Address': hotels[index]['address']['streetAddress']})
-                    elif elem == 'landmarks':
-                        hotels_info[hotels[index]['landmarks'][0]['label']] = \
-                            hotels[index]['landmarks'][0]['distance']
-                    elif elem == 'name':
-                        hotels_info.update({'Name Hotel': hotels[index][elem]})
-                    elif elem == 'ratePlan':
-                        hotels_info.update({'Price': hotels[index]['ratePlan']['price']['current']})
-                    elif elem == 'id' and count_photo > 0:
-                        result = photo(count_photo, hotels[index]['id'])
-                        hotels_info.update({'Photo': result})
-                total_list.append(hotels_info)
-            if index == num_stop - 1:
-                break
-            if float(dist_float) > float(distance):
-                continue
-    if response.status_code == 400:
-        hotels_info.update({'Result': 'Сбой запроса!'})
-        total_list.append(hotels_info)
-    return total_list
+        response = requests.request("GET", url_hotels, headers=headers, params=querystring, timeout=25)
+        try:
+            hotels: dict = response.json().get('data').get('body').get('searchResults').get('results')
+            for index in range(len(hotels)):
+                hotels_info = {}
+                dist = hotels[index]['landmarks'][0]['distance'].split()
+                dist_float = ''.join([i if i.isdigit() else i.replace(',', '.') for i in dist[0]])
+                if float(dist_float) <= float(distance):
+                    for elem in hotels[index]:
+                        try:
+                            if elem == 'starRating':
+                                hotels_info.update({'Star': int(hotels[index]['starRating']) * '*'})
+                            elif elem == 'address':
+                                hotels_info.update({'Город': hotels[index]['address']['locality']})
+                                if 'streetAddress' in hotels[index]['address']:
+                                    hotels_info.update({'Адрес': hotels[index]['address']['streetAddress']})
+                            elif elem == 'landmarks':
+                                hotels_info[hotels[index]['landmarks'][0]['label']] = \
+                                    hotels[index]['landmarks'][0]['distance']
+                            elif elem == 'name':
+                                hotels_info.update({'Название отеля': hotels[index][elem]})
+                            elif elem == 'ratePlan':
+                                hotels_info.update({'Цена за все время проживания':
+                                                    hotels[index]['ratePlan']['price']['current']})
+                            elif elem == 'id' and count_photo > 0:
+                                result = photo(count_photo, hotels[index]['id'])
+                                hotels_info.update({'Photo': result})
+                        except (KeyError, TypeError, IndexError, AttributeError):
+                            pass
+                    count += 1
+                    yield hotels_info
+                if float(dist_float) > float(distance):
+                    continue
+                if count == num_stop:
+                    return
+
+        except (TimeoutError, ConnectionError, KeyError, IndexError):
+            return ['Ошибка запроса либо вышло время ожидания запроса!']
 
 
-@logger
 def photo(count: int, id_hot: int) -> List[str]:
     """
     Функция для поиска фотографий.
-    count: Сколько фотографий вывести.
+    param count: Сколько фотографий вывести.
+    param id_hot: id отеля по которому ищем фотографии.
     """
-    querystring = {"id": id_hot}
-    response = requests.request("GET", url_photo, headers=headers, params=querystring, timeout=25)
-    data = json.loads(response.content)
-    data_loads = data['hotelImages']
-    photo_list = []
-    for i, photos in enumerate(data_loads):
-        for elem in photos:
-            if elem == 'baseUrl':
-                photo_list.append(photos['baseUrl'].format(size='z'))
-        if i >= count - 1:
-            break
-    return photo_list
+    photo_list: list = []
+    try:
+        querystring: dict = {"id": id_hot}
+        response = requests.request("GET", url_photo, headers=headers, params=querystring, timeout=25)
+        data: dict = json.loads(response.content)
+        data_loads: list = data['hotelImages']
+        for i, photos in enumerate(data_loads):
+            for elem in photos:
+                if elem == 'baseUrl':
+                    photo_list.append(photos['baseUrl'].format(size='z'))
+            if i >= count - 1:
+                break
+        return photo_list
+    except (TimeoutError, ConnectionError, IndexError, KeyError) as err:
+        with open('logging.log', 'a') as file:
+            file.write(f'\n{datetime.now()}, {type(err)} {__name__}')
+        photo_list.append({'Photo': 'Не найдено!'})
+        return photo_list
