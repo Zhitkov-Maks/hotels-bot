@@ -10,6 +10,8 @@ from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP
 from botrequests import low_higth
 from users import User
 from botrequests import bestdeal
+from botrequests import history_bd
+import re
 import sqlite3
 
 
@@ -19,6 +21,8 @@ logging.basicConfig(
 
 bot_token = config('TOKEN')
 bot = telebot.TeleBot(bot_token)
+history_bd.create_tables()
+
 
 def logger(func: Callable) -> Callable:
     """"Декоратор для обработки ошибок."""
@@ -26,29 +30,31 @@ def logger(func: Callable) -> Callable:
     def wrapper(*args, **kwargs):
         try:
             result: callable(func) = func(*args, **kwargs)
+            return result
         except (TypeError, ValueError, AttributeError, IndexError, NameError) as err:
-            bot.send_message(message.chat.id, 'Извините произошла ошибка. Попробуйте еще раз!')
+            message = args[0]
+            bot.send_message(message.chat.id, 'Извините, произошла ошибка, попробуйте еще раз.')
             help_welcome(message)
             with open('logging.log', 'a') as file:
                 file.write(f'\n{datetime.now()}, {type(err)} {func.__name__}')
-        return result
     return wrapper
 
 
-@bot.message_handler(commands=['start', 'hello_world'])
+@bot.message_handler(commands=['start', 'hello-world'])
 def start_welcome(message):
     """Функция приветствия, реагирует на команды ('start', 'hello_world')"""
     user = User.get_user(message.from_user.id)
     bot.send_message(message.from_user.id, 'Здравствуйте, я телеграмм бот для поиска отелей и я помогу найти вам '
                                            'отель по вашим предпочтениям. Чтобы узнать что я умею введите'
                                            ' /help. ')
-    logging.info(f'Пользователь {message.chat.id} ввел команду {message.text}, функция start_welcome. {user}')
+    logging.info(f'ID user-{message.chat.id} ввел команду {message.text}, '
+                 f'функция start_welcome. Пользователь: {message.from_user.first_name}.')
 
 
 @bot.message_handler(commands=['help'])
 def help_welcome(message) -> None:
     """Функция вывода доступных команд."""
-    user: object = User.get_user(message.chat.id)
+    user: object = User.get_user(message.from_user.id)
     bot.send_message(message.chat.id, "Список доступных команд: "
                                       "\n/lowprice - Вывод самых дешёвых отелей."
                                       "\n/highprice - Вывод самых дорогих отелей."
@@ -56,7 +62,8 @@ def help_welcome(message) -> None:
                                       "расположению от центра. "
                                       "\n/history - Вывод истории поиска отелей."
                                       "\n/settings - В какой валюте будем искать отели?")
-    logging.info(f'Пользователь {message.chat.id} ввел команду {message.text}, функция help_welcome, {user}')
+    logging.info(f'ID user-{message.chat.id} ввел команду {message.text}, '
+                 f'функция help_welcome, Пользователь: {message.from_user.first_name}.')
 
 
 @logger
@@ -64,6 +71,8 @@ def help_welcome(message) -> None:
 def command_input(message: types.Message) -> None:
     """
     Функция обрабатывает любой текст кроме команд ('/start', '/hello_world', /help)
+    Если введены команды для поиска отелей, то сразу запрашивает город.
+    Если settings то спрашиваем в какой валюте ищем.
     """
     user: object = User.get_user(message.chat.id)
     user.command = message.text
@@ -76,26 +85,34 @@ def command_input(message: types.Message) -> None:
 
     elif message.text == '/settings':
         bax = telebot.types.ReplyKeyboardMarkup(True, True)
-        rub = telebot.types.KeyboardButton("В рублях!")
-        dollars = telebot.types.KeyboardButton("In dollars")
+        rub = types.KeyboardButton("В рублях")
+        dollars = types.KeyboardButton("В долларах")
         bax.add(rub, dollars)
         message = bot.send_message(message.chat.id, "В какой валюте искать отели?", reply_markup=bax)
         bot.register_next_step_handler(message, money)
     else:
         bot.send_message(message.chat.id, 'Команда не найдена, видимо вы что-то не так ввели!')
         help_welcome(message)
-    logging.info(f'Пользователь - {message.chat.id} ввел сообщение: {message.text}, функция city_input. {user}')
+    logging.info(f'ID user - {message.chat.id} ввел сообщение: {message.text}, '
+                 f'функция city_input. Пользователь: {message.from_user.first_name}.')
 
 
 @logger
-def money(message):
+def money(message: types):
     user: object = User.get_user(message.from_user.id)
-    if message.text == 'В рублях!':
-        user.money = "RUB"
-    elif message.text == "In dollars":
-        user.money = "USD"
-    bot.send_message(message.chat.id, "Успешно!, Давайте искать отели!")
-    help_welcome(message)
+    if message.text.lower() == 'в рублях' or message.text.lower() == "в долларах":
+        if message.text.lower() == 'в рублях':
+            user.money = "RUB"
+        elif message.text.lower() == "в долларах":
+            user.money = "USD"
+        bot.send_message(message.chat.id, "Успешно!, Давайте искать отели!")
+        help_welcome(message)
+    else:
+        bot.send_message(message.chat.id, "Неверный ввод, попробуйте еще раз!")
+        message.text = '/settings'
+        command_input(message)
+    logging.info(f'ID user - {message.chat.id} ввел сообщение: {message.text}, '
+                 f'функция money. Пользователь: {message.from_user.first_name}.')
 
 
 @logger
@@ -116,7 +133,8 @@ def date_travel(message: types.Message) -> None:
     else:
         bot.send_message(message.chat.id, 'Когда будем заселяться?')
         start_calendar(message)
-    logging.info(f'Пользователь - {message.chat.id} ввел сообщение: {message.text}, функция data_travel. {user}')
+    logging.info(f'ID user - {message.chat.id} ввел сообщение: {message.text}, '
+                 f'функция data_travel. Пользователь:  {message.from_user.first_name}.')
 
 
 @logger
@@ -128,6 +146,7 @@ def start_calendar(message: types.KeyboardButton) -> None:
 
 @bot.callback_query_handler(func=DetailedTelegramCalendar.func())
 def cal(call: types.CallbackQuery) -> None:
+    """Выбираем дату в календаре."""
     res, key, step = DetailedTelegramCalendar(min_date=date.today()).process(call.data)
     if not res and key:
         bot.edit_message_text(f"Выберите: {LSTEP[step]}", call.message.chat.id, call.message.message_id,
@@ -140,6 +159,8 @@ def cal(call: types.CallbackQuery) -> None:
 
 @logger
 def get_date(message: types.Message) -> None:
+    """Записываем введенные даты.
+    В зависимости от типа команды спрашиваем либо сколько отелей ищем, либо запрашиваем диапазон цен."""
     user = User.get_user(message.chat.id)
     if user.date_1 is None:
         user.date_1 = message.text
@@ -151,7 +172,7 @@ def get_date(message: types.Message) -> None:
         # Проверяем не ввел ли пользователь вторую дату меньше чем первую.
         date_1: int = int(''.join([digit for digit in str(date_1) if digit.isdigit()]))
         date_2: int = int(''.join([digit for digit in str(date_2) if digit.isdigit()]))
-        logging.info(f'Пользователь - {message.chat.id} ввел даты: {user.date_1} and {user.date_2}')
+        logging.info(f'ID user - {message.chat.id} ввел даты: {user.date_1} and {user.date_2}')
 
         if date_1 >= date_2:
             bot.send_message(message.chat.id, 'Неверный ввод даты, попробуйте еще раз.')
@@ -165,17 +186,19 @@ def get_date(message: types.Message) -> None:
         elif date_1 < date_2 and user.command == '/bestdeal':
             bot.send_message(message.chat.id, 'Введите диапазон цен (в формате: min-max)')
             bot.register_next_step_handler(message, distance)
-        logging.info(f'Пользователь - {message.chat.id} ввел сообщение: {message.text}, функция data_travel. {user}')
+        logging.info(f'ID user - {message.chat.id} ввел сообщение: {message.text}, '
+                     f'функция data_travel. Пользователь: {message.from_user.first_name}.')
 
 
 @logger
 def distance(message: types.Message) -> None:
+    """Запрашиваем на каком расстоянии от центра ищем отели."""
     if message.text.startswith('/'):
         help_welcome(message)
     else:
-        user: object = User.get_user(message.chat.id)
-        user.price = message.text.split('-')
-        if len(user.price) < 2:
+        user: object = User.get_user(message.from_user.id)
+        user.price = re.findall(r'\d{2,6}', message.text)
+        if len(user.price) < 2 or int(user.price[1]) <= int(user.price[0]):
             message.text = user.command
             bot.send_message(message.chat.id, 'Ошибка ввода, введите еще раз еще раз!')
             bot.register_next_step_handler(message, distance)
@@ -183,7 +206,8 @@ def distance(message: types.Message) -> None:
             user.distance = None
             bot.send_message(message.chat.id, 'Введите до какого расстоянии от центра искать отели?')
             bot.register_next_step_handler(message, count_hotel)
-        logging.info(f'Пользователь - {message.from_user.id} ввел сообщение: {message.text}, Функция distance. {user}')
+        logging.info(f'ID user - {message.from_user.id} ввел сообщение: {message.text}, '
+                     f'Функция distance. {message.from_user.first_name}.')
 
 
 @logger
@@ -201,7 +225,8 @@ def count_hotel(message: types.Message):
             user.distance = message.text
             bot.send_message(message.chat.id, 'Сколько отелей необходимо найти?(Максимум 25!)')
             bot.register_next_step_handler(message, get_photo)
-        logging.info(f'Пользователь - {message.from_user.id} ввел сообщение: {message.text}, count_hotel. {user}')
+        logging.info(f'ID user - {message.from_user.id} ввел сообщение: {message.text}, '
+                     f'count_hotel. {message.from_user.first_name}.')
 
 
 @logger
@@ -227,7 +252,8 @@ def get_photo(message: types.Message) -> None:
         except ValueError:
             bot.send_message(message.chat.id, 'Нужно ввести целое число! Попробуйте еще раз!')
             bot.register_next_step_handler(message, get_photo)
-        logging.info(f'Пользователь - {message.from_user.id} ввел сообщение: {message.text}, get_photo. {user}')
+        logging.info(f'ID user - {message.from_user.id} ввел сообщение: {message.text}, '
+                     f'get_photo. {message.from_user.first_name}.')
 
 
 @logger
@@ -242,7 +268,8 @@ def need_photo(message: types.ReplyKeyboardMarkup) -> None:
         requests_city(message)
     elif str(message.text).startswith('/'):
         help_welcome(message)
-    logging.info(f'Пользователь - {message.from_user.id} ввел сообщение: {message.text}, need_photo. {user}')
+    logging.info(f'ID user - {message.from_user.id} ввел сообщение: {message.text}, '
+                 f'need_photo. Пользователь: {message.from_user.first_name}.')
 
 
 @logger
@@ -265,62 +292,70 @@ def requests_city(message: types.Message) -> None:
             else:
                 markup_city = telebot.types.ReplyKeyboardMarkup(True, True)
                 for i in range(len(result)):
-                    new_btn = telebot.types.KeyboardButton(f'{result[i][1]}')
-                    markup_city.add(new_btn)
+                    markup_city.add(types.KeyboardButton(f'{result[i][1]}'))
+                markup_city.add(types.KeyboardButton('Отмена'))
                 message = bot.send_message(message.chat.id, "Выберите город!", reply_markup=markup_city)
                 bot.register_next_step_handler(message, get_hotel, result)
+
         except ValueError:
             bot.send_message(message.from_user.id, 'Oшибка! Нужно ввести целое число. Давайте попробуем еще раз!')
-            bot.register_next_step_handler(message, requests_city)
-        logging.info(f'Пользователь - {message.from_user.id} ввел сообщение: {message.text}, request_city. {user}')
+            bot.register_next_step_handler(message, requests_city, result)
+        logging.info(f'ID user - {message.from_user.id} ввел сообщение: {message.text}, '
+                     f'request_city. Пользователь: {message.from_user.first_name}.')
 
 
 @logger
-def get_hotel(message: types.ReplyKeyboardMarkup, res: list) -> None:
+def get_hotel(message: types.InlineKeyboardMarkup, res: list) -> None:
+    """Функция выводящая результаты поиска по выбранному городу."""
     city: str = None
     user: object = User.get_user(message.chat.id)
-    for index in range(len(res)):
-        if res[index][1] == message.text:
-            city = int(res[index][0])
-            break
-    else:
-        bot.send_message(message.chat.id, 'Такого города нет в списке!')
+    if message.text.lower() == 'отмена':
         help_welcome(message)
-
-    if city:
-        arrival_date = []
-        arrival_date.append(user.date_1), arrival_date.append(user.date_2)
-        bot.send_message(message.chat.id, 'Ожидайте идет поиск, это не займет много времени!')
-        if user.command == '/highprice' or user.command == '/lowprice':
-            search_hotel = low_higth.search_hotels(city, arrival_date, int(user.count_hotel), user.command, user.money,
-                                                   int(user.count_photo))
-        else:
-            search_hotel = bestdeal.search_hotels(city, arrival_date, int(user.count_hotel),
-                                                  user.price, user.distance, user.money, user.count_photo)
-
-        for dct in search_hotel:
-            result: str = ''
-            if isinstance(dct, dict):
-                for info in dct:
-                    if info != 'Photo':
-                        result += f'{info}: {dct[info]}\n'
-                bot.send_message(message.chat.id, result)
-                media_group = list()
-                try:
-                    for info in dct:
-                        if info == 'Photo':
-                            for photo in dct[info]:
-                                media_group.append(InputMediaPhoto(photo))
-                            bot.send_media_group(message.chat.id, media_group)
-                except Exception:
-                    bot.send_message(message.chat.id, 'Ошибка загрузки фотографий.')
-            else:
-                for elem in dct:
-                    bot.send_message(message.chat.id, elem)
     else:
-        bot.send_message(message.chat.id, 'Ничего не найдено(((')
-    bot.send_message(message.chat.id, "Поиск отелей завершен!")
-    logging.info(f'Пользователь - {message.from_user.id} ввел сообщение: {message.text}, get_hotel. {user}')
+        for index in range(len(res)):
+            if res[index][1] == message.text:
+                city = int(res[index][0])
+                break
+        else:
+            bot.send_message(message.chat.id, 'Такого города нет в списке!')
+            help_welcome(message)
+
+        if city:
+            history_bd.write_users(message.from_user.id, user.command, datetime.now())
+            arrival_date = []
+            arrival_date.append(user.date_1), arrival_date.append(user.date_2)
+            bot.send_message(message.chat.id, 'Ожидайте идет поиск, это не займет много времени!')
+            if user.command == '/highprice' or user.command == '/lowprice':
+                search_hotel = low_higth.search_hotels(city, arrival_date, int(user.count_hotel), user.command, user.money,
+                                                       int(user.count_photo))
+            else:
+                search_hotel = bestdeal.search_hotels(city, arrival_date, int(user.count_hotel),
+                                                      user.price, user.distance, user.money, user.count_photo)
+
+            for dct in search_hotel:
+                result: str = ''
+                if isinstance(dct, dict):
+                    for info in dct:
+                        if info != 'Photo':
+                            result += f'{info}: {dct[info]}\n'
+                    bot.send_message(message.chat.id, result)
+                    media_group = list()
+                    try:
+                        for info in dct:
+                            if info == 'Photo':
+                                for photo in dct[info]:
+                                    media_group.append(InputMediaPhoto(photo))
+                                bot.send_media_group(message.chat.id, media_group)
+                    except Exception:
+                        bot.send_message(message.chat.id, 'Ошибка загрузки фотографий.')
+                else:
+                    for elem in dct:
+                        bot.send_message(message.chat.id, elem)
+        else:
+            bot.send_message(message.chat.id, 'Ничего не найдено(((')
+        bot.send_message(message.chat.id, "Поиск отелей завершен!")
+        logging.info(f'ID user - {message.from_user.id} ввел сообщение: {message.text}, '
+                     f'get_hotel. {message.from_user.first_name}.')
 
 
 if __name__ == '__main__':

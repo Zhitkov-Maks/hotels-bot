@@ -1,8 +1,8 @@
 import requests
 import json
 from typing import List, Iterator
-from datetime import datetime
 from decouple import config
+from requests.exceptions import Timeout, ConnectionError
 
 api_host = config("API_HOST")
 api_key = config('API_KEY')
@@ -38,11 +38,11 @@ def search_city(city: str) -> List[list]:
                     list_city.append(dct[name])
             total_list.append(list_city)
         return total_list
-    except (TimeoutError, ConnectionError, KeyError, IndexError):
+    except (Timeout, ConnectionError, KeyError, IndexError):
         return []
 
 
-def search_hotels(id_city: int, data_lst: list, num_stop: int, command: str, money, count_photo=0) -> Iterator:
+def search_hotels(id_city: int, date_lst: list, num_stop: int, command: str, money, count_photo=0) -> Iterator:
     """
     Функция для поиска отелей.
     В зависимости от команды пользователя отели сортируются по цене,
@@ -59,11 +59,14 @@ def search_hotels(id_city: int, data_lst: list, num_stop: int, command: str, mon
     elif command == '/highprice':
         sort = "PRICE_HIGHEST_FIRST"
 
-    querystring: dict = {"destinationId": id_city, "pageNumber": "1", "pageSize": "25", "checkIn": data_lst[0],
-                         "checkOut": data_lst[1], "adults1": "1", "sortOrder": sort, "locale": "ru_RU",
+    querystring: dict = {"destinationId": id_city, "pageNumber": "1", "pageSize": "25", "checkIn": date_lst[0],
+                         "checkOut": date_lst[1], "adults1": "1", "sortOrder": sort, "locale": "ru_RU",
                          "currency": money}
+    date_1 = int(''.join([digit for digit in str(date_lst[0]) if digit.isdigit()]))
+    date_2 = int(''.join([digit for digit in str(date_lst[1]) if digit.isdigit()]))
+    count_day = date_2 - date_1
     try:
-        response = requests.request("GET", url_hotels, headers=headers, params=querystring, timeout=25)
+        response = requests.request("GET", url_hotels, headers=headers, params=querystring, timeout=(10, 120))
         hotels: dict = response.json().get('data').get('body').get('searchResults').get('results')
         for index in range(len(hotels)):
             hotels_info: dict = {}
@@ -82,7 +85,11 @@ def search_hotels(id_city: int, data_lst: list, num_stop: int, command: str, mon
                     elif elem == 'name':
                         hotels_info.update({'Название отеля': hotels[index][elem]})
                     elif elem == 'ratePlan':
-                        hotels_info.update({'Цена за все время проживания': hotels[index]['ratePlan']['price']['current']})
+                        hotels_info.update(
+                            {'Цена за все время проживания': hotels[index]['ratePlan']['price']['current']})
+                        hotels_info.update({'Цена за сутки':
+                                            round((hotels[index]['ratePlan']['price'][
+                                                    'exactCurrent']) / count_day, 2)})
                     elif elem == 'id' and count_photo > 0:
                         result = photo(count_photo, hotels[index]['id'])
                         hotels_info.update({'Photo': result})
@@ -91,7 +98,7 @@ def search_hotels(id_city: int, data_lst: list, num_stop: int, command: str, mon
             yield hotels_info
             if index == num_stop - 1:
                 return
-    except (TimeoutError, ConnectionError, KeyError, IndexError):
+    except (Timeout, ConnectionError):
         return ['Ошибка запроса либо вышло время ожидания запроса!']
 
 
@@ -104,7 +111,7 @@ def photo(count: int, id_hot: int) -> List[str]:
     photo_list: list = []
     try:
         querystring: dict = {"id": id_hot}
-        response = requests.request("GET", url_photo, headers=headers, params=querystring, timeout=15)
+        response = requests.request("GET", url_photo, headers=headers, params=querystring, timeout=(20, 60))
         data = json.loads(response.content)
         data_loads: list = data['hotelImages']
         for i, photos in enumerate(data_loads):

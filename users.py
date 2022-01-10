@@ -36,5 +36,4 @@ class User:
         else:
             user: object = User()
             User.user_dict[id_user] = user
-            user.from_user = id_user
         return user
