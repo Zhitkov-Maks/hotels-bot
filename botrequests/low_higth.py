@@ -1,9 +1,11 @@
 import requests
 import json
-from typing import List, Iterator
-from decouple import config
-from requests.exceptions import Timeout, ConnectionError
 from datetime import datetime
+from typing import List, Union, Iterator
+from requests.exceptions import Timeout, ConnectionError
+
+from decouple import config
+
 
 api_host = config("API_HOST")
 api_key = config('API_KEY')
@@ -16,10 +18,10 @@ headers = {
 }
 
 
-def search_city(city: str) -> list or str:
+def search_city(city: str) -> Union[List[list] or str]:
     """
     Функция находит ID Запрашиваемого Города.
-    Возвращает список ID найденных городов или районов города.
+    Возвращает список ID и названий найденных городов или районов города.
     param: city Город который ввел пользователь.
     """
 
@@ -28,28 +30,27 @@ def search_city(city: str) -> list or str:
         response = requests.request("GET", url, headers=headers, params=querystring, timeout=15)
         data: dict = json.loads(response.text)
         id_city: list = data['suggestions'][0]['entities']
-        total_list: list = []  # Список для хранения всех найденных городов
-
-        for dct in id_city:
+        # Проходимся по списку с полученным результатом и сохраняем id и название города в список.
+        total_list: list = []
+        for info in id_city:
             list_city: list = []
-
-            for name in dct:
-
-                if name == 'destinationId':  # Получаем id города
-                    list_city.append(dct[name])
-
-                elif name == 'name':  # Получаем название города
-                    list_city.append(dct[name])
+            for name in info:
+                if name == 'destinationId':
+                    list_city.append(info[name])
+                elif name == 'name':
+                    list_city.append(info[name])
+            # Сохраняем все в общий список, в котором будут все найденные города.
             total_list.append(list_city)
-
         return total_list
+
     except (Timeout, ConnectionError, KeyError, IndexError) as err:
         with open('logging.log', 'a') as file:
             file.write(f'\n{datetime.now()}, {type(err)}, search_city')
         return 'Вышло время запроса, или произошел сбой. Пожалуйста попробуйте еще раз!'
 
 
-def search_hotels(id_city: int, date_lst: list, num_stop: int, command: str, money, count_photo=0) -> Iterator[dict]:
+def search_hotels(id_city: int, date_lst: list, num_stop: int, command: str, money, count_photo=0) \
+        -> Union[Iterator[dict], Iterator[str]]:
     """
     Функция для поиска отелей.
     В зависимости от команды пользователя отели сортируются по цене,
@@ -62,9 +63,10 @@ def search_hotels(id_city: int, date_lst: list, num_stop: int, command: str, mon
     param: money - В какой валюте будем выводить стоимость проживания.
     """
     sort: str = ''
-    if command == '/lowprice':  # Для поиска дешевых отелей
+    # В зависимости от команды выбираем нужную сортировку.
+    if command == '/lowprice':
         sort = "PRICE"
-    elif command == '/highprice':  # Для поиска дорогих отелей
+    elif command == '/highprice':
         sort = "PRICE_HIGHEST_FIRST"
 
     querystring: dict = {
@@ -86,36 +88,38 @@ def search_hotels(id_city: int, date_lst: list, num_stop: int, command: str, mon
         response = requests.request("GET", url_hotels, headers=headers, params=querystring, timeout=(10, 60))
         hotels: dict = response.json().get('data').get('body').get('searchResults').get('results')
 
+        # Проходимся по списку с найденными отелями и собираем нужную информацию.
         for index in range(len(hotels)):
             hotels_info: dict = {}
             try:
                 for elem in hotels[index]:
-                    if elem == 'starRating':  # Рейтинг отеля
+                    if elem == 'starRating':
                         hotels_info.update({'Рейтинг': int(hotels[index]['starRating']) * '*'})
 
-                    elif elem == 'address':  # Город и Адрес отеля
+                    elif elem == 'address':
                         hotels_info.update({'Город': hotels[index]['address']['locality']})
                         if 'streetAddress' in hotels[index]['address']:
                             hotels_info.update({'Адрес': hotels[index]['address']['streetAddress']})
 
-                    elif elem == 'landmarks':  # Расстояние от центра
+                    elif elem == 'landmarks':
                         hotels_info[hotels[index]['landmarks'][0]['label']] = \
                             hotels[index]['landmarks'][0]['distance']
 
-                    elif elem == 'name':  # Название отеля
+                    elif elem == 'name':
                         hotels_info.update({'Название отеля': hotels[index][elem]})
 
-                    elif elem == 'ratePlan':  # Прейскурант проживания
+                    elif elem == 'ratePlan':
                         hotels_info.update(
                             {'Цена за все время проживания': hotels[index]['ratePlan']['price']['current']})
                         hotels_info.update({'Цена за сутки': round((hotels[index]['ratePlan']['price'][
                                                     'exactCurrent']) / count_day, 2)})
 
-                    elif elem == 'id':  # Ссылка на отель
+                    elif elem == 'id':
                         hotels_info.update(
                             {'Ссылка на отель': 'ru.hotels.com/ho{0}'.format(hotels[index]['id'])}
                         )
-                        if count_photo > 0:  # Если нужны фотографии то отправляем на поиск фото
+                        # Если нужны фотографии, то отправляем в функцию photo для поиска фотографий.
+                        if count_photo > 0:
                             result = photo(count_photo, hotels[index]['id'])
                             hotels_info.update({'Photo': result})
 
@@ -129,12 +133,11 @@ def search_hotels(id_city: int, date_lst: list, num_stop: int, command: str, mon
             if len(hotels_info) > 0:
                 yield hotels_info
 
-            if index == num_stop - 1:  # Если количество найденных отелей равно запросу пользователя, останавливаем.
+            if index == num_stop - 1:
                 return
-    except (Timeout, ConnectionError) as err:  # Записываем ошибки в файл
+    except (Timeout, ConnectionError) as err:
         with open('logging.log', 'a') as file:
             file.write(f'\n{datetime.now()}, {type(err)}, search_hotels')
-
         yield 'Вышло время запроса, или произошел сбой. Пожалуйста попробуйте еще раз!'
 
 
@@ -153,15 +156,14 @@ def photo(count: int, id_hot: int) -> List[str]:
 
         for i, photos in enumerate(data_loads):
             for elem in photos:
-
                 if elem == 'baseUrl':
-                    photo_list.append(photos['baseUrl'].format(size='z'))  # Заменяем чтобы получить фото.
-
-            if i >= count - 1:  # Останавливаем если количество фото достигло нужного значения.
+                    # Сейчас нам нужно заменить в найденной строке size, на букву(которая обозначает размер фото)
+                    photo_list.append(photos['baseUrl'].format(size='z'))
+            if i >= count - 1:
                 break
         return photo_list
 
     except (Timeout, ConnectionError, IndexError, KeyError) as err:
-        with open('logging.log', 'a') as file:  # Записываем ошибки в файл
+        with open('logging.log', 'a') as file:
             file.write(f'\n{datetime.now()}, {type(err)}, search_hotels')
         return []

@@ -1,9 +1,10 @@
 import requests
 import json
-from typing import List, Iterator
+from typing import List, Union, Iterator
 from datetime import datetime
-from decouple import config
 from requests.exceptions import Timeout, ConnectionError
+
+from decouple import config
 
 api_host = config("API_HOST")
 api_key = config('API_KEY')
@@ -17,7 +18,7 @@ headers = {
 
 
 def search_hotels(id_city: int, date_lst: list, num_stop: int, price: list, distance: int, money,
-                  count_photo=0) -> Iterator[dict]:
+                  count_photo=0) -> Union[Iterator[dict], Iterator[str]]:
     """
     Функция для поиска отелей.
     Ищет отели в заданном ценовом диапазоне, а затем сортируется по удалению от центра.
@@ -36,7 +37,9 @@ def search_hotels(id_city: int, date_lst: list, num_stop: int, price: list, dist
         "checkIn": date_lst[0],
         "checkOut": date_lst[1],
         "adults1": "1",
-        "sortOrder": 'DISTANCE_FROM_LANDMARK', "priceMin": price[0], "priceMax": price[1],
+        "sortOrder": 'DISTANCE_FROM_LANDMARK',
+        "priceMin": price[0],
+        "priceMax": price[1],
         "locale": "ru_RU",
         "currency": money
     }
@@ -49,53 +52,56 @@ def search_hotels(id_city: int, date_lst: list, num_stop: int, price: list, dist
     try:
         hotels: dict = response.json().get('data').get('body').get('searchResults').get('results')
         for index in range(len(hotels)):
-            hotels_info = {}  # Словарь в котором будут данные об отеле
+            hotels_info = {}
             # Находим дистанцию до центра города, нужна чтобы отсеять ненужные значения
-            dist = hotels[index]['landmarks'][0]['distance'].split()
-            dist_float = ''.join([i if i.isdigit() else i.replace(',', '.') for i in dist[0]])
+            dist: list = hotels[index]['landmarks'][0]['distance'].split()
+            dist_float: str = ''.join([i if i.isdigit() else i.replace(',', '.') for i in dist[0]])
 
+            # Продолжаем собирать результат пока расстояние от центра меньше чем ввел пользователь.
             if float(dist_float) <= float(distance):
                 try:
+                    # Собираем интересующую нас информацию
                     for elem in hotels[index]:
-
-                        if elem == 'starRating':  # Рейтинг отеля
+                        if elem == 'starRating':
                             hotels_info.update({'Рейтинг': int(hotels[index]['starRating']) * '*'})
 
-                        elif elem == 'address':  # Город и Адрес отеля
+                        elif elem == 'address':
                             hotels_info.update({'Город': hotels[index]['address']['locality']})
                             if 'streetAddress' in hotels[index]['address']:
                                 hotels_info.update({'Адрес': hotels[index]['address']['streetAddress']})
 
-                        elif elem == 'landmarks':  # Расстояние от центра
+                        elif elem == 'landmarks':
                             hotels_info[hotels[index]['landmarks'][0]['label']] = \
                                 hotels[index]['landmarks'][0]['distance']
 
-                        elif elem == 'name':  # Название отеля
+                        elif elem == 'name':
                             hotels_info.update({'Название отеля': hotels[index][elem]})
 
-                        elif elem == 'ratePlan':  # Прейскурант проживания
+                        elif elem == 'ratePlan':
                             hotels_info.update({
                                 'Цена за все время проживания': hotels[index]['ratePlan']['price']['current']
                             })
                             hotels_info.update({'Цена за сутки': round((hotels[index]['ratePlan']['price'][
                                 'exactCurrent']) / count_day, 2)})
 
-                        elif elem == 'id':  # Ссылка на отель
+                        elif elem == 'id':
                             hotels_info.update(
                                 {'Ссылка на отель': 'ru.hotels.com/ho{0}'.format(hotels[index]['id'])}
                             )
-
-                            if count_photo > 0:  # Если нужны фотографии то отправляем на поиск фот
+                            # Отправляем на поиск фото, если это нужно.
+                            if count_photo > 0:
                                 result = photo(count_photo, hotels[index]['id'])
                                 hotels_info.update({'Photo': result})
 
                 except (KeyError, TypeError, IndexError, AttributeError) as err:
-                    with open('logging.log', 'a') as file:  # Записываем ошибки в файл
+                    with open('logging.log', 'a') as file:
                         file.write(f'\n{datetime.now()}, {type(err)}, search_hotels')
                         # Если при поиске данных у отеля произошла ошибка то мы этот отель просто пропускаем.
                         continue
+
                 count += 1
-                if len(hotels_info) > 0:  # Для отправки результата используем генератор
+                # Для отправки результата используем генератор
+                if len(hotels_info) > 0:
                     yield hotels_info
 
             if float(dist_float) > float(distance):
@@ -109,7 +115,6 @@ def search_hotels(id_city: int, date_lst: list, num_stop: int, price: list, dist
     except (Timeout, ConnectionError) as err:
         with open('logging.log', 'a') as file:
             file.write(f'\n{datetime.now()}, {type(err)}, search_hotels')
-
         yield 'Вышло время запроса, или произошел сбой. Пожалуйста попробуйте еще раз!'
 
 
@@ -129,6 +134,7 @@ def photo(count: int, id_hot: int) -> List[str]:
         for i, photos in enumerate(data_loads):
             for elem in photos:
                 if elem == 'baseUrl':
+                    # Сейчас нам нужно заменить в найденной строке size, на букву(которая обозначает размер фото)
                     photo_list.append(photos['baseUrl'].format(size='z'))
             if i >= count - 1:
                 break
