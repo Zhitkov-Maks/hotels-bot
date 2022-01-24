@@ -301,9 +301,9 @@ def get_photo(message: types.Message) -> None:
 @logger
 def count_photo(message: types.Message) -> None:
     """Функция спрашивает сколько фотографий необходимо запросить?"""
-    user = User.get_user(message.from_user)
+    user = User.get_user(message.from_user.id)
     if str(message.text).lower() == 'yes' or str(message.text).lower() == 'да':
-        bot.send_message(message.chat.id, 'Сколько фотографий. Максимум 10.')
+        bot.send_message(message.chat.id, 'Сколько фотографий? Максимум 5:')
         bot.register_next_step_handler(message, requests_city)
     elif str(message.text).lower() == 'no' or str(message.text).lower() == 'нет':
         message.text = '0'
@@ -326,10 +326,10 @@ def requests_city(message: types.Message) -> None:
     else:
         if message.text.isdigit():
             user.count_photo = int(message.text)
-            if user.count_photo > 10:
+            if user.count_photo > 5:
                 bot.send_message(message.from_user.id,
-                                 'Ваше количество превышает максимально допустимое. Будет показано 10 фотографий')
-                user.count_photo = '10'
+                                 'Ваше количество превышает максимально допустимое. Будет показано 5 фотографий')
+                user.count_photo = '5'
             # Отправляем на поиск города, введенного пользователем.
             result: Union[list or str] = low_higth.search_city(user.city)
 
@@ -418,7 +418,6 @@ def get_hotel(message: types.Message, res: list) -> None:
                     bot.send_message(message.chat.id, dct)
             if count:
                 bot.send_message(message.chat.id, 'Ничего не найдено, попробуйте еще раз!')
-                menu(message)
         bot.send_message(message.chat.id, "Поиск отелей завершен!")
         menu(message)
     logging.info(f'ID user-{message.from_user.id}; ввел - {message.text};')
